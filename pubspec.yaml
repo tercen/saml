@@ -6,9 +6,10 @@ environment:
   sdk: '>=2.6.0 <3.0.0'
 
 dependencies:
-   xml:
-   rsa_pkcs:
-   pointycastle:
+  uuid:
+  xml:
+  rsa_pkcs:
+  pointycastle:
 
 dev_dependencies:
   lints: ^1.0.0

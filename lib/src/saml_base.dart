@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:uuid/uuid.dart';
 
 import 'package:xml/xml.dart';
 
@@ -11,15 +12,22 @@ class Saml {
   static const String SAML_PROTOCOL_NS = 'urn:oasis:names:tc:SAML:2.0:protocol';
   static const String SAML_ASSERTION_NS =
       'urn:oasis:names:tc:SAML:2.0:assertion';
+  static const String SAML_METADATA_NS = 'urn:oasis:names:tc:SAML:2.0:metadata';
   static const String XMLDSIG_NS = 'http://www.w3.org/2000/09/xmldsig#';
 
   RSASigner _signer;
 
-  final String _issuer;
+  final String _idpIssuer;
+  final String _requestIssuer;
   final String _audience;
+  final String _bindingUrl;
 
   static Future<Saml> fromCertificatePemFile(
-      String certificateFile, String issuer, String audience) async {
+      String certificateFile,
+      String idpIssuer,
+      String audience,
+      String bindingUrl,
+      String requestIssuer) async {
     final certFile = File(certificateFile);
     var rsaParser = rsa.RSAPKCSParser();
     final pair = rsaParser.parsePEM(await certFile.readAsString());
@@ -28,10 +36,17 @@ class Saml {
     final verifier = RSASigner(SHA256Digest(), '0609608648016503040201');
     verifier.init(false, PublicKeyParameter<RSAPublicKey>(publicKey)); // false=
 
-    return Saml(issuer, audience, verifier); // verify
+    return Saml(
+        idpIssuer, audience, verifier, bindingUrl, requestIssuer); // verify
   }
 
-  Saml(this._issuer, this._audience, this._signer) {}
+  Saml(this._idpIssuer, this._audience, this._signer, this._bindingUrl,
+      this._requestIssuer);
+
+  SamlAuthnRequest createAuthnRequest() =>
+      SamlAuthnRequest.fromIssuer(_requestIssuer);
+  SamlLogoutRequest createLogoutRequest(String nameId) =>
+      SamlLogoutRequest.fromIssuer(_requestIssuer, nameId);
 
   bool _rsaVerify(Uint8List signedData, Uint8List signature) {
     final sig = RSASignature(signature);
@@ -43,16 +58,18 @@ class Saml {
     }
   }
 
-  String get issuer => _issuer;
+  String get idpIssuer => _idpIssuer;
   String get audience => _audience;
+  String get bindingUrl => _bindingUrl;
 
   bool validateResponse(SamlResponse response, {bool validateTime: true}) {
-    if (response.issuer != _issuer) {
+    if (response.issuer != _idpIssuer) {
       return false;
     }
 
     for (var assertion in response.assertions) {
-      if (!assertion.validate(issuer, audience, validateTime: validateTime)) {
+      if (!assertion.validate(idpIssuer, audience,
+          validateTime: validateTime)) {
         return false;
       }
     }
@@ -96,6 +113,66 @@ class Saml {
 
     return true;
   }
+}
+
+class SamlLogoutRequest {
+  XmlElement _request;
+
+  SamlLogoutRequest(String xml) {
+    _request = XmlDocument.parse(xml).rootElement;
+  }
+
+  SamlLogoutRequest.fromIssuer(String issuer, String nameId) {
+    var message = '''
+<samlp:LogoutRequest 
+xmlns="${Saml.SAML_METADATA_NS}" 
+ID="${'id' + Uuid().v4()}" 
+Version="2.0" 
+IssueInstant="${DateTime.now().toUtc().toIso8601String()}" 
+xmlns:samlp="${Saml.SAML_PROTOCOL_NS}">
+  <Issuer xmlns="${Saml.SAML_ASSERTION_NS}">${issuer}</Issuer>
+  <NameID xmlns="${Saml.SAML_ASSERTION_NS}">${nameId}</NameID>
+</samlp:LogoutRequest>
+''';
+    _request = XmlDocument.parse(message).rootElement;
+  }
+
+  String get id => _request.getAttribute('ID');
+  String get issuer => _request.findElements('Issuer').first.text;
+  String get nameId => _request.findElements('NameID').first.text;
+  DateTime get issueInstant =>
+      DateTime.parse(_request.getAttribute('IssueInstant'));
+
+  String toXml() => _request.toXmlString();
+}
+
+class SamlAuthnRequest {
+  XmlElement _request;
+
+  SamlAuthnRequest(String xml) {
+    _request = XmlDocument.parse(xml).rootElement;
+  }
+
+  SamlAuthnRequest.fromIssuer(String issuer) {
+    var message = '''
+<samlp:AuthnRequest
+xmlns="${Saml.SAML_METADATA_NS}"
+ID="${'id' + Uuid().v4()}"
+Version="2.0" 
+IssueInstant="${DateTime.now().toUtc().toIso8601String()}"
+xmlns:samlp="${Saml.SAML_PROTOCOL_NS}">
+<Issuer xmlns="${Saml.SAML_ASSERTION_NS}">${issuer}</Issuer>
+</samlp:AuthnRequest>
+''';
+    _request = XmlDocument.parse(message).rootElement;
+  }
+
+  String get id => _request.getAttribute('ID');
+  String get issuer => _request.findElements('Issuer').first.text;
+  DateTime get issueInstant =>
+      DateTime.parse(_request.getAttribute('IssueInstant'));
+
+  String toXml() => _request.toXmlString();
 }
 
 class SamlResponse {
@@ -146,10 +223,10 @@ class Assertion {
     }
 
     if (validateTime) {
-      if (notBefore.isBefore(DateTime.now())) {
+      if (DateTime.now().toUtc().isBefore(notBefore)) {
         return false;
       }
-      if (notOnOrAfter.isAfter(DateTime.now())) {
+      if (DateTime.now().toUtc().isAfter(notOnOrAfter)) {
         return false;
       }
     }
