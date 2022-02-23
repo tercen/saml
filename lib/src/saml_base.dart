@@ -86,28 +86,49 @@ class Saml {
   }
 
   bool validateSignature(SamlResponse response) {
-    return _rsaVerify(utf8.encode(response.signature.signedInfo.canonicalized),
-        base64.decode(response.signature.signatureValue));
+    for (var signature in response.signatures) {
+      return _rsaVerify(utf8.encode(signature.signedInfo.canonicalized),
+          base64.decode(signature.signatureValue));
+    }
   }
 
   bool validateDigests(SamlResponse response) {
     var digest = SHA256Digest();
 
-    for (var reference in response.signature.signedInfo.references) {
-      if (reference.digestMethodAlgorithm !=
-          'http://www.w3.org/2001/04/xmlenc#sha256') {
-        return false;
-      }
+    for (var signature in response.signatures) {
+      for (var reference in signature.signedInfo.references) {
+        if (reference.digestMethodAlgorithm !=
+            'http://www.w3.org/2001/04/xmlenc#sha256') {
+          return false;
+        }
 
-      // if (reference.uri != response.id) {
-      //   return false;
-      // }
+        var element = reference.referenceElement;
+        var elementToSign = element.copy();
 
-      var canon = response.canonicalizedWithoutSignature;
+        var prefix = element.name.prefix;
 
-      if (reference.digestValue !=
-          base64.encode(digest.process(utf8.encode(canon)))) {
-        return false;
+        if (prefix == null && element.name.namespaceUri != null) {
+          elementToSign.setAttribute('xmlns', element.name.namespaceUri);
+        } else {
+          if (null == elementToSign.getAttribute('xmlns:$prefix')) {
+            elementToSign.setAttribute(
+                'xmlns:$prefix', element.name.namespaceUri);
+          }
+        }
+
+        // remove signature element from object to sign
+        for (var signature in elementToSign
+            .findAllElements('Signature', namespace: Saml.XMLDSIG_NS)
+            .toList()) {
+          signature.parent.children.remove(signature);
+        }
+
+        var canon = XmlExcC14nWriter.canonicalized(elementToSign);
+
+        if (reference.digestValue !=
+            base64.encode(digest.process(utf8.encode(canon)))) {
+          return false;
+        }
       }
     }
 
@@ -184,15 +205,6 @@ class SamlResponse {
         .first;
   }
 
-  String get canonicalizedWithoutSignature {
-    var res = _response.copy();
-
-    res.children.remove(
-        res.findElements('Signature', namespace: Saml.XMLDSIG_NS).first);
-
-    return XmlExcC14nWriter.canonicalized(res);
-  }
-
   String get id => _response.getAttribute('ID');
 
   String get issuer => _response
@@ -200,11 +212,13 @@ class SamlResponse {
       .first
       .text;
 
-  Signature get signature => Signature(
-      _response.findElements('Signature', namespace: Saml.XMLDSIG_NS).first);
+  List<Signature> get signatures => _response
+      .findAllElements('Signature', namespace: Saml.XMLDSIG_NS)
+      .map((e) => Signature(e))
+      .toList();
 
   Iterable<Assertion> get assertions => _response
-      .findElements('Assertion', namespace: Saml.SAML_ASSERTION_NS)
+      .findAllElements('Assertion', namespace: Saml.SAML_ASSERTION_NS)
       .map((e) => Assertion(e));
 }
 
@@ -316,8 +330,12 @@ class SignedInfo {
 
     var prefix = _signedInfo.name.prefix;
 
-    if (null == _signedInfo.getAttribute('xmlns:$prefix')) {
-      si.setAttribute('xmlns:$prefix', _signedInfo.name.namespaceUri);
+    if (prefix == null) {
+      si.setAttribute('xmlns', _signedInfo.name.namespaceUri);
+    } else {
+      if (null == _signedInfo.getAttribute('xmlns:$prefix')) {
+        si.setAttribute('xmlns:$prefix', _signedInfo.name.namespaceUri);
+      }
     }
 
     writer.visit(si);
@@ -341,6 +359,17 @@ class Reference {
       .getAttribute('Algorithm');
 
   String get uri => _reference.getAttribute('URI');
+
+  XmlElement get referenceElement {
+    if (null == uri) {
+      return _reference.root;
+    }
+
+    return _reference.root
+        .findAllElements('*')
+        .where((element) => element.getAttribute('ID') != null)
+        .firstWhere((e) => '#${e.getAttribute('ID')}' == uri);
+  }
 }
 
 class Transforms {
@@ -366,19 +395,33 @@ class XmlExcC14nWriter with XmlVisitor {
   final XmlEntityMapping entityMapping;
 
   static bool hasNamespaceDeclaration(XmlElement e, String prefix) {
-    if (e.attributes
-        .any((p0) => p0.name.prefix == 'xmlns' && p0.name.local == prefix)) {
-      return true;
+    if (prefix == null) {
+      if (e.attributes.any((p0) => p0.name.local == 'xmlns')) {
+        return true;
+      }
+      var parent = e.parent;
+      if (parent == null) {
+        return false;
+      }
+      if (parent.attributes.any((p0) => p0.name.local == 'xmlns')) {
+        return true;
+      }
+      return hasNamespaceDeclaration(parent, prefix);
+    } else {
+      if (e.attributes
+          .any((p0) => p0.name.prefix == 'xmlns' && p0.name.local == prefix)) {
+        return true;
+      }
+      var parent = e.parent;
+      if (parent == null) {
+        return false;
+      }
+      if (parent.attributes
+          .any((p0) => p0.name.prefix == 'xmlns' && p0.name.local == prefix)) {
+        return true;
+      }
+      return hasNamespaceDeclaration(parent, prefix);
     }
-    var parent = e.parent;
-    if (parent == null) {
-      return false;
-    }
-    if (parent.attributes
-        .any((p0) => p0.name.prefix == 'xmlns' && p0.name.local == prefix)) {
-      return true;
-    }
-    return hasNamespaceDeclaration(parent, prefix);
   }
 
   // see tool
@@ -402,8 +445,9 @@ class XmlExcC14nWriter with XmlVisitor {
     // remove namespaces
     elements.forEach((element) {
       element.attributes
-          .where((p0) => p0.name.prefix == 'xmlns' || p0.name.local == 'xmlns')
-          .where((e) => e.name.prefix != element.name.prefix)
+          .where((a) => a.name.prefix == 'xmlns' || a.name.local == 'xmlns')
+          .where((a) =>
+              a.name.prefix != element.name.prefix || a.name.local == 'xmlns')
           .toList()
           .forEach((e) {
         element.attributes.remove(e);
@@ -413,10 +457,15 @@ class XmlExcC14nWriter with XmlVisitor {
     // add namespaces
     elements.forEach((element) {
       if (!hasNamespaceDeclaration(element, element.name.prefix)) {
-        element.attributes.insert(
-            0,
-            XmlAttribute(XmlName(element.name.prefix, 'xmlns'),
-                namespaceList[element.name.prefix]));
+        if (element.name.prefix == null) {
+          element.attributes.insert(
+              0, XmlAttribute(XmlName('xmlns'), namespaceList['xmlns']));
+        } else {
+          element.attributes.insert(
+              0,
+              XmlAttribute(XmlName(element.name.prefix, 'xmlns'),
+                  namespaceList[element.name.prefix]));
+        }
       }
 
       element.attributes
