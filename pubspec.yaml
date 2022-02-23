@@ -1,6 +1,6 @@
 name: saml
 description: Utility library for smal
-version: 1.0.0
+version: 1.0.1
 
 environment:
   sdk: '>=2.6.0 <3.0.0'
