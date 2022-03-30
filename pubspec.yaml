@@ -1,13 +1,13 @@
 name: saml
 description: Utility library for smal
-version: 1.0.1
+version: 1.0.2
 
 environment:
   sdk: '>=2.6.0 <3.0.0'
 
 dependencies:
   uuid:
-  xml:
+  xml: ^5.3.1
   rsa_pkcs:
   pointycastle:
 
