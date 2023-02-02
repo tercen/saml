@@ -32,7 +32,7 @@ class Saml {
     var rsaParser = rsa.RSAPKCSParser();
     final pair = rsaParser.parsePEM(await certFile.readAsString());
     var publicKey = RSAPublicKey(
-        pair.public.modulus, BigInt.from(pair.public.publicExponent));
+        pair.public!.modulus, BigInt.from(pair.public!.publicExponent));
     final verifier = RSASigner(SHA256Digest(), '0609608648016503040201');
     verifier.init(false, PublicKeyParameter<RSAPublicKey>(publicKey)); // false=
 
@@ -86,10 +86,9 @@ class Saml {
   }
 
   bool validateSignature(SamlResponse response) {
-    for (var signature in response.signatures) {
-      return _rsaVerify(utf8.encode(signature.signedInfo.canonicalized),
-          base64.decode(signature.signatureValue));
-    }
+    return response.signatures.any((signature) => _rsaVerify(
+        utf8.encode(signature.signedInfo.canonicalized) as Uint8List,
+        base64.decode(signature.signatureValue)));
   }
 
   bool validateDigests(SamlResponse response) {
@@ -120,13 +119,13 @@ class Saml {
         for (var signature in elementToSign
             .findAllElements('Signature', namespace: Saml.XMLDSIG_NS)
             .toList()) {
-          signature.parent.children.remove(signature);
+          signature.parent!.children.remove(signature);
         }
 
         var canon = XmlExcC14nWriter.canonicalized(elementToSign);
 
         if (reference.digestValue !=
-            base64.encode(digest.process(utf8.encode(canon)))) {
+            base64.encode(digest.process(utf8.encode(canon) as Uint8List))) {
           return false;
         }
       }
@@ -137,7 +136,7 @@ class Saml {
 }
 
 class SamlLogoutRequest {
-  XmlElement _request;
+  late XmlElement _request;
 
   SamlLogoutRequest(String xml) {
     _request = XmlDocument.parse(xml).rootElement;
@@ -158,17 +157,17 @@ xmlns:samlp="${Saml.SAML_PROTOCOL_NS}">
     _request = XmlDocument.parse(message).rootElement;
   }
 
-  String get id => _request.getAttribute('ID');
+  String? get id => _request.getAttribute('ID');
   String get issuer => _request.findElements('Issuer').first.text;
   String get nameId => _request.findElements('NameID').first.text;
   DateTime get issueInstant =>
-      DateTime.parse(_request.getAttribute('IssueInstant'));
+      DateTime.parse(_request.getAttribute('IssueInstant')!);
 
   String toXml() => _request.toXmlString();
 }
 
 class SamlAuthnRequest {
-  XmlElement _request;
+  late XmlElement _request;
 
   SamlAuthnRequest(String xml) {
     _request = XmlDocument.parse(xml).rootElement;
@@ -188,16 +187,16 @@ xmlns:samlp="${Saml.SAML_PROTOCOL_NS}">
     _request = XmlDocument.parse(message).rootElement;
   }
 
-  String get id => _request.getAttribute('ID');
+  String get id => _request.getAttribute('ID')!;
   String get issuer => _request.findElements('Issuer').first.text;
   DateTime get issueInstant =>
-      DateTime.parse(_request.getAttribute('IssueInstant'));
+      DateTime.parse(_request.getAttribute('IssueInstant')!);
 
   String toXml() => _request.toXmlString();
 }
 
 class SamlResponse {
-  XmlElement _response;
+  late XmlElement _response;
 
   SamlResponse(String xmlResponse) {
     _response = XmlDocument.parse(xmlResponse)
@@ -205,7 +204,7 @@ class SamlResponse {
         .first;
   }
 
-  String get id => _response.getAttribute('ID');
+  String get id => _response.getAttribute('ID')!;
 
   String get issuer => _response
       .findElements('Issuer', namespace: Saml.SAML_ASSERTION_NS)
@@ -253,9 +252,9 @@ class Assertion {
       .first;
 
   DateTime get notBefore =>
-      DateTime.parse(conditions.getAttribute('NotBefore'));
+      DateTime.parse(conditions.getAttribute('NotBefore')!);
   DateTime get notOnOrAfter =>
-      DateTime.parse(conditions.getAttribute('NotOnOrAfter'));
+      DateTime.parse(conditions.getAttribute('NotOnOrAfter')!);
 
   XmlElement get audienceRestriction => conditions
       .findElements('AudienceRestriction', namespace: Saml.SAML_ASSERTION_NS)
@@ -310,14 +309,14 @@ class SignedInfo {
       .first;
 
   String get canonicalizationMethodAlgorithm =>
-      _canonicalizationMethod.getAttribute('Algorithm');
+      _canonicalizationMethod.getAttribute('Algorithm')!;
 
   XmlElement get _signatureMethod => _signedInfo
       .findElements('SignatureMethod', namespace: Saml.XMLDSIG_NS)
       .first;
 
   String get signatureMethodAlgorithm =>
-      _signatureMethod.getAttribute('Algorithm');
+      _signatureMethod.getAttribute('Algorithm')!;
 
   Iterable<Reference> get references => _signedInfo
       .findElements('Reference', namespace: Saml.XMLDSIG_NS)
@@ -356,13 +355,13 @@ class Reference {
   String get digestMethodAlgorithm => _reference
       .findElements('DigestMethod', namespace: Saml.XMLDSIG_NS)
       .first
-      .getAttribute('Algorithm');
+      .getAttribute('Algorithm')!;
 
-  String get uri => _reference.getAttribute('URI');
+  String get uri => _reference.getAttribute('URI')!;
 
   XmlElement get referenceElement {
     if (null == uri) {
-      return _reference.root;
+      return _reference.root as XmlElement;
     }
 
     return _reference.root
@@ -387,14 +386,14 @@ class Transform {
 
   Transform(this._transform);
 
-  String get algorithm => _transform.getAttribute('Algorithm');
+  String get algorithm => _transform.getAttribute('Algorithm')!;
 }
 
 class XmlExcC14nWriter with XmlVisitor {
   final StringSink buffer;
   final XmlEntityMapping entityMapping;
 
-  static bool hasNamespaceDeclaration(XmlElement e, String prefix) {
+  static bool hasNamespaceDeclaration(XmlElement e, String? prefix) {
     if (prefix == null) {
       if (e.attributes.any((p0) => p0.name.local == 'xmlns')) {
         return true;
@@ -406,7 +405,7 @@ class XmlExcC14nWriter with XmlVisitor {
       if (parent.attributes.any((p0) => p0.name.local == 'xmlns')) {
         return true;
       }
-      return hasNamespaceDeclaration(parent, prefix);
+      return hasNamespaceDeclaration(parent as XmlElement, prefix);
     } else {
       if (e.attributes
           .any((p0) => p0.name.prefix == 'xmlns' && p0.name.local == prefix)) {
@@ -420,7 +419,7 @@ class XmlExcC14nWriter with XmlVisitor {
           .any((p0) => p0.name.prefix == 'xmlns' && p0.name.local == prefix)) {
         return true;
       }
-      return hasNamespaceDeclaration(parent, prefix);
+      return hasNamespaceDeclaration(parent as XmlElement, prefix);
     }
   }
 
@@ -459,12 +458,12 @@ class XmlExcC14nWriter with XmlVisitor {
       if (!hasNamespaceDeclaration(element, element.name.prefix)) {
         if (element.name.prefix == null) {
           element.attributes.insert(
-              0, XmlAttribute(XmlName('xmlns'), namespaceList['xmlns']));
+              0, XmlAttribute(XmlName('xmlns'), namespaceList['xmlns']!));
         } else {
           element.attributes.insert(
               0,
-              XmlAttribute(XmlName(element.name.prefix, 'xmlns'),
-                  namespaceList[element.name.prefix]));
+              XmlAttribute(XmlName(element.name.prefix!, 'xmlns'),
+                  namespaceList[element.name.prefix!]!));
         }
       }
 
@@ -476,8 +475,8 @@ class XmlExcC14nWriter with XmlVisitor {
         if (!hasNamespaceDeclaration(element, p0.name.prefix)) {
           element.attributes.insert(
               0,
-              XmlAttribute(XmlName(p0.name.prefix, 'xmlns'),
-                  namespaceList[p0.name.prefix]));
+              XmlAttribute(XmlName(p0.name.prefix!, 'xmlns'),
+                  namespaceList[p0.name.prefix!]!));
         }
       });
     });
@@ -489,7 +488,7 @@ class XmlExcC14nWriter with XmlVisitor {
     return buffer.toString();
   }
 
-  XmlExcC14nWriter(this.buffer, {XmlEntityMapping entityMapping})
+  XmlExcC14nWriter(this.buffer, {XmlEntityMapping? entityMapping})
       : entityMapping = entityMapping ?? defaultEntityMapping;
 
   @override
@@ -579,7 +578,7 @@ class XmlExcC14nWriter with XmlVisitor {
     }
   }
 
-  void writeIterable(Iterable<XmlHasVisitor> nodes, [String separator]) {
+  void writeIterable(Iterable<XmlHasVisitor> nodes, [String? separator]) {
     final iterator = nodes.iterator;
     if (iterator.moveNext()) {
       if (separator == null || separator.isEmpty) {

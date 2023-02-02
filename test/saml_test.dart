@@ -50,12 +50,12 @@ void main() {
     test('First Test', () async {
 
       for (var config in samlConfigs) {
-        String response = config['RESPONSE'];
-        String issuer = config['ISSUER'];
-        String bindingUrl = config['BINDING_URL'];
-        String audience = config['AUDIENCE'];
-        String requestIssuer = config['REQUEST_ISSUER'];
-        String certFile = config['CERT_FILE'];
+        String response = config['RESPONSE']!;
+        String issuer = config['ISSUER']!;
+        String bindingUrl = config['BINDING_URL']!;
+        String audience = config['AUDIENCE']!;
+        String requestIssuer = config['REQUEST_ISSUER']!;
+        String certFile = config['CERT_FILE']!;
 
         var saml = await Saml.fromCertificatePemFile(
             certFile, issuer, audience, bindingUrl, requestIssuer);
