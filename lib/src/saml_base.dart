@@ -116,10 +116,16 @@ class Saml {
         }
 
         // remove signature element from object to sign
-        for (var signature in elementToSign
+        var signatureToRemoves = elementToSign
             .findAllElements('Signature', namespace: Saml.XMLDSIG_NS)
-            .toList()) {
-          signature.parent!.children.remove(signature);
+            .map((e) => Signature(e))
+            .where(
+                (sig) => sig.signedInfo.references.first.uri == reference.uri)
+            .map((e) => e.signatureElement)
+            .toList();
+
+        for (var signatureElement in signatureToRemoves) {
+          signatureElement.parent!.children.remove(signatureElement);
         }
 
         var canon = XmlExcC14nWriter.canonicalized(elementToSign);
@@ -289,6 +295,8 @@ class Signature {
   final XmlElement _signature;
 
   Signature(this._signature);
+
+  XmlElement get signatureElement => _signature;
 
   SignedInfo get signedInfo => SignedInfo(
       _signature.findElements('SignedInfo', namespace: Saml.XMLDSIG_NS).first);
@@ -574,7 +582,22 @@ class XmlExcC14nWriter with XmlVisitor {
   void writeAttributes(XmlHasAttributes node) {
     if (node.attributes.isNotEmpty) {
       buffer.write(XmlToken.whitespace);
-      writeIterable(node.attributes, XmlToken.whitespace);
+
+      var attributes = node.attributes.toList();
+
+      var attrs = attributes
+          .where((element) => element.name.prefix == "xmlns" || element.localName == "xmlns")
+          .toList();
+
+      var others = attributes
+          .where((element) => !(element.name.prefix == "xmlns" || element.localName == "xmlns"))
+          .toList();
+
+      others.sort((a, b) => a.localName.compareTo(b.localName));
+
+      attrs.addAll(others);
+
+      writeIterable(attrs, XmlToken.whitespace);
     }
   }
 
