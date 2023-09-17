@@ -278,6 +278,38 @@ class Assertion {
   XmlElement get issuer => _assertion
       .findElements('Issuer', namespace: Saml.SAML_ASSERTION_NS)
       .first;
+
+  AttributeStatement? get attributeStatement => _assertion
+      .findElements('AttributeStatement', namespace: Saml.SAML_ASSERTION_NS)
+      .map((e) => AttributeStatement(e))
+      .firstOrNull;
+}
+
+class AttributeStatement {
+  final XmlElement _attributeStatement;
+  AttributeStatement(this._attributeStatement);
+
+  Iterable<Attribute> get attributes => _attributeStatement
+      .findElements('Attribute', namespace: Saml.SAML_ASSERTION_NS)
+      .map((e) => Attribute(e));
+}
+
+class Attribute {
+  final XmlElement _attribute;
+  Attribute(this._attribute);
+
+  String get name =>  _attribute.getAttribute("Name").toString();
+  AttributeValue get attributeValue => _attribute
+      .findElements('AttributeValue', namespace: Saml.SAML_ASSERTION_NS)
+      .map((e) => AttributeValue(e))
+      .first;
+}
+
+class AttributeValue {
+  final XmlElement _attributeValue;
+  AttributeValue(this._attributeValue);
+
+  String get value => _attributeValue.innerText;
 }
 
 class Subject {
@@ -586,11 +618,13 @@ class XmlExcC14nWriter with XmlVisitor {
       var attributes = node.attributes.toList();
 
       var attrs = attributes
-          .where((element) => element.name.prefix == "xmlns" || element.localName == "xmlns")
+          .where((element) =>
+              element.name.prefix == "xmlns" || element.localName == "xmlns")
           .toList();
 
       var others = attributes
-          .where((element) => !(element.name.prefix == "xmlns" || element.localName == "xmlns"))
+          .where((element) =>
+              !(element.name.prefix == "xmlns" || element.localName == "xmlns"))
           .toList();
 
       others.sort((a, b) => a.localName.compareTo(b.localName));
