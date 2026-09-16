@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:saml/saml.dart';
@@ -101,6 +102,69 @@ void main() {
         "manage-account-links",
         "uma_authorization"
       ]);
+    });
+
+    test('Inline certificate value test', () async {
+      for (var config in samlConfigs) {
+        String response = config['RESPONSE']!;
+        String issuer = config['ISSUER']!;
+        String bindingUrl = config['BINDING_URL']!;
+        String audience = config['AUDIENCE']!;
+        String requestIssuer = config['REQUEST_ISSUER']!;
+        String certContent =
+            File(config['CERT_FILE']!).readAsStringSync();
+
+        String base64Body = LineSplitter.split(certContent)
+            .map((line) => line.trim())
+            .where((line) => line.isNotEmpty && !line.startsWith('-----'))
+            .join();
+
+        // bare base64 DER, single line
+        var saml = await Saml.fromCertificatePem(
+            base64Body, issuer, audience, bindingUrl, requestIssuer);
+        expect(
+            saml.validateResponse(SamlResponse(response), validateTime: false),
+            isTrue);
+
+        // bare base64 DER, broken into short lines with whitespace
+        // (the form IdP federation metadata embeds in X509Certificate)
+        var wrapped = RegExp('.{1,32}').allMatches(base64Body).map((m) => m.group(0)).join('\n');
+        saml = await Saml.fromCertificatePem(
+            wrapped, issuer, audience, bindingUrl, requestIssuer);
+        expect(
+            saml.validateResponse(SamlResponse(response), validateTime: false),
+            isTrue);
+
+        // PEM-armoured string — same outcome as the file constructor
+        saml = await Saml.fromCertificatePem(
+            certContent, issuer, audience, bindingUrl, requestIssuer);
+        expect(
+            saml.validateResponse(SamlResponse(response), validateTime: false),
+            isTrue);
+
+        // validation still rejects a wrong issuer / audience
+        saml = await Saml.fromCertificatePem(
+            base64Body, 'dummy', audience, bindingUrl, requestIssuer);
+        expect(
+            saml.validateResponse(SamlResponse(response), validateTime: false),
+            isFalse);
+
+        saml = await Saml.fromCertificatePem(
+            base64Body, issuer, 'dummy', bindingUrl, requestIssuer);
+        expect(
+            saml.validateResponse(SamlResponse(response), validateTime: false),
+            isFalse);
+      }
+
+      // no certificate content — construction throws
+      expect(
+          () async => await Saml.fromCertificatePem(
+              'not-a-certificate',
+              AZURE_ISSUER,
+              AZURE_AUDIENCE,
+              AZURE_BINDING_URL,
+              AZURE_REQUEST_ISSUER),
+          throwsFormatException);
     });
   });
 }

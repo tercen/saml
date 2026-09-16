@@ -29,15 +29,46 @@ class Saml {
       String bindingUrl,
       String requestIssuer) async {
     final certFile = File(certificateFile);
-    var rsaParser = rsa.RSAPKCSParser();
-    final pair = rsaParser.parsePEM(await certFile.readAsString());
-    var publicKey = RSAPublicKey(
-        pair.public!.modulus, BigInt.from(pair.public!.publicExponent));
-    final verifier = RSASigner(SHA256Digest(), '0609608648016503040201');
-    verifier.init(false, PublicKeyParameter<RSAPublicKey>(publicKey)); // false=
+    final verifier =
+        _verifierFromCertificateString(await certFile.readAsString());
 
-    return Saml(
-        idpIssuer, audience, verifier, bindingUrl, requestIssuer); // verify
+    return Saml(idpIssuer, audience, verifier, bindingUrl, requestIssuer);
+  }
+
+  /// Builds a Saml from the IdP signing certificate given as an inline
+  /// string — PEM-armoured or bare base64 DER (the form IdP federation
+  /// metadata publishes inside X509Certificate elements).
+  static Future<Saml> fromCertificatePem(
+      String certificatePem,
+      String idpIssuer,
+      String audience,
+      String bindingUrl,
+      String requestIssuer) async {
+    final verifier = _verifierFromCertificateString(certificatePem);
+
+    return Saml(idpIssuer, audience, verifier, bindingUrl, requestIssuer);
+  }
+
+  static RSASigner _verifierFromCertificateString(String certificateString) {
+    // bare base64 DER carries no PEM armour — wrap it so RSAPKCSParser
+    // recognises the certificate
+    final pem = certificateString.contains('-----BEGIN')
+        ? certificateString
+        : '-----BEGIN CERTIFICATE-----\n' +
+            certificateString.replaceAll(RegExp(r'\s'), '') +
+            '\n-----END CERTIFICATE-----';
+    var rsaParser = rsa.RSAPKCSParser();
+    final pair = rsaParser.parsePEM(pem);
+    final certPublicKey = pair.public;
+    if (certPublicKey == null) {
+      throw const FormatException('no certificate found in input');
+    }
+    var publicKey = RSAPublicKey(
+        certPublicKey.modulus, BigInt.from(certPublicKey.publicExponent));
+    final verifier = RSASigner(SHA256Digest(), '0609608648016503040201');
+    verifier.init(false, PublicKeyParameter<RSAPublicKey>(publicKey)); // false=verify
+
+    return verifier;
   }
 
   Saml(this._idpIssuer, this._audience, this._signer, this._bindingUrl,
