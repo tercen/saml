@@ -1,3 +1,9 @@
+## 1.1.8
+
+- SECURITY: removed a leftover debug `print` in the exc-c14n
+  canonicalization helper that dumped the full canonicalized Assertion —
+  NameID (user email) + attributes — to stdout on EVERY signature
+  validation (PII in pod logs; present since 1.1.4).
 ## 1.1.7
 
 - `SamlMetadata.parse` + `Saml.fromMetadata`: build a Saml from an IdP
