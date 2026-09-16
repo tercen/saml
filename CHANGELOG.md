@@ -1,3 +1,11 @@
+## 1.1.9
+
+- `Attribute.attributeValues` (plural): exposes EVERY `<AttributeValue>` of
+  an attribute. IdPs like Entra ID emit app-role claims as a single
+  `<Attribute>` carrying multiple values; the existing singular
+  `attributeValue` getter only ever surfaced the first of them. The
+  singular getter is unchanged (first value).
+
 ## 1.1.8
 
 - SECURITY: removed a leftover debug `print` in the exc-c14n
