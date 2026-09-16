@@ -441,10 +441,14 @@ class Attribute {
   Attribute(this._attribute);
 
   String get name => _attribute.getAttribute("Name").toString();
-  AttributeValue get attributeValue => _attribute
+  AttributeValue get attributeValue => attributeValues.first;
+
+  /// ALL values of this attribute. IdPs like Entra ID emit app-role claims
+  /// as a single <Attribute> carrying multiple <AttributeValue> children;
+  /// [attributeValue] only ever exposes the first of them.
+  Iterable<AttributeValue> get attributeValues => _attribute
       .findElements('AttributeValue', namespace: Saml.SAML_ASSERTION_NS)
-      .map((e) => AttributeValue(e))
-      .first;
+      .map((e) => AttributeValue(e));
 }
 
 class AttributeValue {
