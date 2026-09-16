@@ -14,8 +14,10 @@ class Saml {
       'urn:oasis:names:tc:SAML:2.0:assertion';
   static const String SAML_METADATA_NS = 'urn:oasis:names:tc:SAML:2.0:metadata';
   static const String XMLDSIG_NS = 'http://www.w3.org/2000/09/xmldsig#';
+  static const String SAML_HTTP_REDIRECT_BINDING =
+      'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect';
 
-  RSASigner _signer;
+  final List<RSASigner> _signers;
 
   final String _idpIssuer;
   final String _requestIssuer;
@@ -32,7 +34,7 @@ class Saml {
     final verifier =
         _verifierFromCertificateString(await certFile.readAsString());
 
-    return Saml(idpIssuer, audience, verifier, bindingUrl, requestIssuer);
+    return Saml(idpIssuer, audience, [verifier], bindingUrl, requestIssuer);
   }
 
   /// Builds a Saml from the IdP signing certificate given as an inline
@@ -46,7 +48,26 @@ class Saml {
       String requestIssuer) async {
     final verifier = _verifierFromCertificateString(certificatePem);
 
-    return Saml(idpIssuer, audience, verifier, bindingUrl, requestIssuer);
+    return Saml(idpIssuer, audience, [verifier], bindingUrl, requestIssuer);
+  }
+
+  /// Builds a Saml from an IdP metadata document (EntityDescriptor): the
+  /// entityID becomes the IdP issuer, the HTTP-Redirect SingleSignOnService
+  /// location becomes the binding URL, and EVERY advertised signing
+  /// certificate becomes a verification key — so a response signed with any
+  /// one of them validates. That makes IdP certificate rollover (IdPs
+  /// advertise the new key next to the old one) a non-event.
+  ///
+  /// URL fetching is left to the caller.
+  static Future<Saml> fromMetadata(
+      String metadataXml, String requestIssuer, String audience) async {
+    final metadata = SamlMetadata.parse(metadataXml);
+    final verifiers = metadata.certificates
+        .map(_verifierFromCertificateString)
+        .toList(growable: false);
+
+    return Saml(metadata.entityId, audience, verifiers, metadata.bindingUrl,
+        requestIssuer);
   }
 
   static RSASigner _verifierFromCertificateString(String certificateString) {
@@ -71,19 +92,20 @@ class Saml {
     return verifier;
   }
 
-  Saml(this._idpIssuer, this._audience, this._signer, this._bindingUrl,
-      this._requestIssuer);
+  Saml(this._idpIssuer, this._audience, List<RSASigner> signers,
+      this._bindingUrl, this._requestIssuer)
+      : _signers = List<RSASigner>.unmodifiable(signers);
 
   SamlAuthnRequest createAuthnRequest() =>
       SamlAuthnRequest.fromIssuer(_requestIssuer);
   SamlLogoutRequest createLogoutRequest(String nameId) =>
       SamlLogoutRequest.fromIssuer(_requestIssuer, nameId);
 
-  bool _rsaVerify(Uint8List signedData, Uint8List signature) {
+  bool _rsaVerify(RSASigner signer, Uint8List signedData, Uint8List signature) {
     final sig = RSASignature(signature);
 
     try {
-      return _signer.verifySignature(signedData, sig);
+      return signer.verifySignature(signedData, sig);
     } on ArgumentError {
       return false; // for Pointy Castle 1.0.2 when signature has been modified
     }
@@ -117,9 +139,10 @@ class Saml {
   }
 
   bool validateSignature(SamlResponse response) {
-    return response.signatures.any((signature) => _rsaVerify(
-        utf8.encode(signature.signedInfo.canonicalized),
-        base64.decode(signature.signatureValue)));
+    // any response signature may be verified by any advertised key
+    return response.signatures.any((signature) => _signers.any((signer) =>
+        _rsaVerify(signer, utf8.encode(signature.signedInfo.canonicalized),
+            base64.decode(signature.signatureValue))));
   }
 
   bool validateDigests(SamlResponse response) {
@@ -165,6 +188,98 @@ class Saml {
     }
 
     return true;
+  }
+}
+
+/// IdP metadata (EntityDescriptor) relevant to building a Saml: the entity
+/// identifier, the HTTP-Redirect single-sign-on location, and every advertised
+/// signing certificate as bare base64 DER (deduplicated, order preserved).
+class SamlMetadata {
+  final String entityId;
+  final String bindingUrl;
+  final List<String> certificates;
+
+  SamlMetadata(this.entityId, this.bindingUrl, List<String> certificates)
+      : certificates = List<String>.unmodifiable(certificates);
+
+  static List<XmlElement> _findAll(XmlElement parent, String local) {
+    // prefer namespace-qualified matches; fall back to a namespace-agnostic
+    // one because real-world IdP metadata is inconsistent about xmlns
+    var found =
+        parent.findAllElements(local, namespace: Saml.SAML_METADATA_NS);
+    if (found.isEmpty) {
+      found = parent.findAllElements(local);
+    }
+    return found.toList();
+  }
+
+  static List<XmlElement> _findAllXmlDSig(XmlElement parent, String local) {
+    var found = parent.findAllElements(local, namespace: Saml.XMLDSIG_NS);
+    if (found.isEmpty) {
+      found = parent.findAllElements(local);
+    }
+    return found.toList();
+  }
+
+  static SamlMetadata parse(String metadataXml) {
+    final root = XmlDocument.parse(metadataXml).rootElement;
+    if (root.name.local != 'EntityDescriptor') {
+      throw const FormatException(
+          'not an EntityDescriptor metadata document');
+    }
+
+    final entityId = root.getAttribute('entityID');
+    if (entityId == null || entityId.isEmpty) {
+      throw const FormatException('EntityDescriptor/@entityID missing');
+    }
+
+    final idpDescriptors = _findAll(root, 'IDPSSODescriptor');
+    if (idpDescriptors.isEmpty) {
+      throw const FormatException('no IDPSSODescriptor in metadata');
+    }
+
+    String? bindingUrl;
+    final certs = <String>[];
+    final seen = <String>{};
+
+    for (var idp in idpDescriptors) {
+      if (bindingUrl == null) {
+        for (var sso in _findAll(idp, 'SingleSignOnService')) {
+          if (sso.getAttribute('Binding') == Saml.SAML_HTTP_REDIRECT_BINDING) {
+            final location = sso.getAttribute('Location');
+            if (location != null && location.isNotEmpty) {
+              bindingUrl = location;
+              break;
+            }
+          }
+        }
+      }
+
+      for (var keyDescriptor in _findAll(idp, 'KeyDescriptor')) {
+        // use="signing" or use absent (spec: absent means both signing and
+        // encryption); use="encryption" only keys cannot verify responses
+        final use = keyDescriptor.getAttribute('use');
+        if (use == 'encryption') {
+          continue;
+        }
+        for (var cert in _findAllXmlDSig(keyDescriptor, 'X509Certificate')) {
+          final der = cert.innerText.replaceAll(RegExp(r'\s'), '');
+          if (der.isNotEmpty && seen.add(der)) {
+            certs.add(der);
+          }
+        }
+      }
+    }
+
+    if (bindingUrl == null) {
+      throw const FormatException(
+          'no HTTP-Redirect SingleSignOnService in metadata');
+    }
+    if (certs.isEmpty) {
+      throw const FormatException('no signing certificate in metadata');
+    }
+
+    return SamlMetadata(entityId, bindingUrl, certs);
   }
 }
 
