@@ -667,8 +667,6 @@ class XmlExcC14nWriter with XmlVisitor {
       });
     }
 
-    print("copy -- $copy");
-
     var buffer = StringBuffer();
     var writer = XmlExcC14nWriter(buffer);
     writer.visit(copy);
