@@ -1,3 +1,13 @@
+## 1.1.7
+
+- `SamlMetadata.parse` + `Saml.fromMetadata`: build a Saml from an IdP
+  metadata (EntityDescriptor) document — entityID becomes the IdP issuer,
+  the HTTP-Redirect `SingleSignOnService` location the binding URL, and
+  EVERY advertised signing certificate becomes a verification key. URL
+  fetching is left to the caller (sci key `tercen.saml.metadata.url` /
+  `tercen.saml.metadata`, tercen/sci#1602).
+- Multi-key verification: a response signature now validates against ANY
+  advertised key, turning IdP certificate rollover into a non-event.
 ## 1.1.6
 
 - `Saml.fromCertificatePem`: accept the IdP signing certificate as an inline
